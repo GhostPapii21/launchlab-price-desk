@@ -1,20 +1,37 @@
-/* Last-night box history + recency blend. Load after book-import.js */
-(function(){
+/* Last-night box history. Load after book-import.js */
+(function () {
   const HIST_W = 0.12;
   let HIST = { loaded: false, date: '', nB: 0, nP: 0 };
 
+  function normName(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/\./g, '').replace(/'/g, '').replace(/\s+/g, ' ').trim();
+  }
+  function lastFirst(s) {
+    const parts = normName(s).split(' ');
+    return parts[parts.length - 1] || '';
+  }
+  function findPl(name) {
+    const n = normName(name);
+    const last = lastFirst(name);
+    const all = Object.values((window.S && S.players) || {});
+    let hit = all.find(p => normName(p.name) === n);
+    if (hit) return hit;
+    const lastHits = all.filter(p => lastFirst(p.name) === last);
+    if (lastHits.length === 1) return lastHits[0];
+    return all.find(p => normName(p.name).includes(n) || n.includes(normName(p.name))) || null;
+  }
   function upsertLog(pl, entry) {
     pl.log = pl.log || [];
     const key = entry.date + '|' + (entry.opp || '');
-    const exists = pl.log.some(g => (g.date + '|' + (g.opp || '')) === key);
-    if (!exists) pl.log.unshift(entry);
+    if (!pl.log.some(g => (g.date + '|' + (g.opp || '')) === key)) pl.log.unshift(entry);
     if (pl.log.length > 30) pl.log = pl.log.slice(0, 30);
   }
   function applyHistoryDoc(doc) {
     const date = doc.date || '2026-09-24';
     let nB = 0, nP = 0;
     (doc.batters || []).forEach(row => {
-      let pl = findPlayer(row.name);
+      let pl = findPl(row.name);
       if (!pl) {
         const id = 'batter-hist-' + slug(row.name);
         pl = S.players[id] = { id, type: 'batter', name: row.name, team: row.team || '', season: {}, log: [], src: 'box' };
@@ -28,7 +45,7 @@
       nB++;
     });
     (doc.pitchers || []).forEach(row => {
-      let pl = findPlayer(row.name);
+      let pl = findPl(row.name);
       if (!pl || pl.type !== 'pitcher') {
         const id = 'pitcher-hist-' + slug(row.name);
         if (!S.players[id]) S.players[id] = { id, type: 'pitcher', name: row.name, team: row.team || '', season: {}, log: [], src: 'box' };
@@ -76,13 +93,10 @@
       const g = (p.log || []).find(x => x.hist && (x.BF || x.SO));
       if (!g || !out) return out;
       const bf = Math.max(1, +g.BF || ((+String(g.IP || '0').split('.')[0] || 0) * 4.25));
-      const lastK = (+g.SO || 0) / bf;
-      const lastBB = (+g.BB || 0) / bf;
-      const lastHR = (+g.HR || 0) / bf;
       const r = Object.assign({}, out);
-      if (r.K != null) r.K = r.K * (1 - HIST_W) + lastK * HIST_W;
-      if (r.BB != null) r.BB = r.BB * (1 - HIST_W) + lastBB * HIST_W;
-      if (r.HR != null) r.HR = r.HR * (1 - HIST_W) + lastHR * HIST_W;
+      if (r.K != null) r.K = r.K * (1 - HIST_W) + ((+g.SO || 0) / bf) * HIST_W;
+      if (r.BB != null) r.BB = r.BB * (1 - HIST_W) + ((+g.BB || 0) / bf) * HIST_W;
+      if (r.HR != null) r.HR = r.HR * (1 - HIST_W) + ((+g.HR || 0) / bf) * HIST_W;
       return r;
     };
     pitcherRates._hist = true;
@@ -90,7 +104,7 @@
 
   ACT.loadHistory = async function () {
     try {
-      const files = ['history-2026-09-24.json','history-2026-09-24-batters.json','history-2026-09-24-pitchers.json'];
+      const files = ['history-2026-09-24.json', 'history-2026-09-24-batters.json', 'history-2026-09-24-pitchers.json'];
       const doc = { date: '2026-09-24', batters: [], pitchers: [] };
       let any = false;
       for (const f of files) {
@@ -108,17 +122,25 @@
       if (!any || (!doc.batters.length && !doc.pitchers.length)) throw new Error('missing');
       applyHistoryDoc(doc);
     } catch (e) {
-      toast('Could not load last night\u2019s box file.');
+      toast('Could not load last night box file.');
     }
   };
 
-  const _vImport = vImport;
-  vImport = function () {
-    let extra = '<div class="card"><h3>Last night\u2019s box scores</h3>';
-    extra += '<p class="sub">9/24 finals from the scoreboard screenshots. Adds those games to each player\u2019s log and blends 12% of last night into today\u2019s rates.</p>';
-    extra += '<button class="primary" data-act="loadHistory">Build last night into the model</button>';
-    extra += HIST.loaded ? ('<p class="sub">Loaded ' + HIST.date + ': ' + HIST.nB + ' batters, ' + HIST.nP + ' pitchers.</p>') : '';
-    extra += '</div>';
-    return extra + _vImport();
+  const _render = render;
+  render = function () {
+    _render();
+    if (typeof TAB === 'undefined' || TAB !== 'import') return;
+    const app = document.getElementById('app');
+    if (!app || app.querySelector('[data-hist-card]')) return;
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.setAttribute('data-hist-card', '1');
+    card.innerHTML = '<h3>Last night box scores</h3>'
+      + '<p class="sub">9/24 finals from the scoreboard screenshots. Adds those games to each player log and blends 12% of last night into today rates.</p>'
+      + '<button class="primary" data-act="loadHistory">Build last night into the model</button>'
+      + (HIST.loaded ? ('<p class="sub">Loaded ' + HIST.date + ': ' + HIST.nB + ' batters, ' + HIST.nP + ' pitchers.</p>') : '');
+    const h2 = app.querySelector('h2');
+    if (h2 && h2.nextSibling) app.insertBefore(card, h2.nextSibling);
+    else app.appendChild(card);
   };
 })();
