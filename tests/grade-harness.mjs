@@ -107,7 +107,12 @@ if (!offline) {
   const csv = readFileSync(new URL('../books-2026-09-25.csv', import.meta.url), 'utf8').trim().split(/\r?\n/);
   const head = csv.shift().split(',');
   const rows = csv.map(l => Object.fromEntries(l.split(',').map((v, i) => [head[i], v])));
-  const real = await G.loadGames('2026-09-25');
+  let real;
+  try { real = await G.loadGames('2026-09-25'); }
+  catch (e) {
+    console.log(`\nSkipping live box-score check: MLB feed unreachable (${(e.cause && e.cause.code) || e.message}). Run with --offline to silence.`);
+    process.exit(fail ? 1 : 0);
+  }
   console.log(`\nbooks-2026-09-25.csv vs MLB box scores (${real.length} games)`);
   const out = []; const tally = {};
   for (const r of rows) {

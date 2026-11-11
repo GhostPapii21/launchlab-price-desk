@@ -21,6 +21,10 @@
     function add(src, id) {
       var s = d.createElement('script');
       s.id = id;
+      // Injected scripts are async by default and would run in arrival order. Each
+      // add-on wraps render(), and the Import tab's wrapper must run before the ones
+      // that decorate it, so keep execution in insertion order.
+      s.async = false;
       s.src = src + '?t=' + Date.now();
       d.body.appendChild(s);
     }

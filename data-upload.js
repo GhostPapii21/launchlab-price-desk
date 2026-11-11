@@ -83,7 +83,8 @@
         if (!src) return;
         const bf = +src.BF || 0;
         if (!bf) return;
-        c.BF += bf * w; c.H += (+src.H || 0) * w; c.HR += (+src.HR || 0) * w;
+        c.BF += bf * w; c.H += (+src.H || 0) * w; c.D += (+src.D || 0) * w;
+        c.T += (+src.T || 0) * w; c.HR += (+src.HR || 0) * w;
         c.BB += (+src.BB || 0) * w; c.SO += (+src.SO || 0) * w;
       }
       add(f.l10, 0.35); add(f.l5, 0.20);

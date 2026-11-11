@@ -29,17 +29,39 @@
   }
   function normName(s) {
     return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/\./g, '').replace(/'/g, '').replace(/\s+/g, ' ').trim();
+      .replace(/[.']/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')
+      .replace(/ (jr|sr|ii|iii|iv)$/, '').trim();
   }
   function lastFirst(s) {
     const parts = normName(s).split(' ');
     return parts[parts.length - 1] || '';
   }
+  // Full-name match first (accent/suffix-insensitive). A last-name fallback is only
+  // used when the first initial also matches and exactly one player fits, so
+  // "Will Smith" never lands on "Dominic Smith" and "Smith" alone matches nobody.
+  function matchPlayer(name, all) {
+    const n = normName(name);
+    if (!n) return null;
+    const exact = all.filter(p => normName(p.name) === n);
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return null;
+    const parts = n.split(' ');
+    if (parts.length < 2) return null;
+    const last = parts[parts.length - 1], init = parts[0][0];
+    const loose = all.filter(p => {
+      const q = normName(p.name).split(' ');
+      return q.length > 1 && q[q.length - 1] === last && q[0][0] === init;
+    });
+    return loose.length === 1 ? loose[0] : null;
+  }
+  window.LL_matchPlayer = matchPlayer;
   function parseOdds(s) {
     const t = String(s || '').trim().replace(/−/g, '-').replace(/,/g, '');
     if (!t) return '';
-    if (/^[+-]?\d+$/.test(t)) return (t.startsWith('+') || t.startsWith('-')) ? t : (Number(t) >= 100 ? '+' + t : t);
-    return t;
+    if (!/^[+-]?\d+$/.test(t)) return '';
+    const n = Number(t);
+    if (Math.abs(n) < 100) return '';          // not a valid American price
+    return n > 0 ? '+' + Math.abs(n) : String(n);
   }
   function mapMarket(raw, hintKind) {
     const k = String(raw || '').toLowerCase().replace(/_/g, ' ').trim();
@@ -98,14 +120,7 @@
     return out.filter(r => String(r.player || '').trim());
   }
   function findPlayer(name) {
-    const n = normName(name);
-    const last = lastFirst(name);
-    const all = Object.values(S.players || {});
-    let hit = all.find(p => normName(p.name) === n);
-    if (hit) return hit;
-    const lastHits = all.filter(p => lastFirst(p.name) === last);
-    if (lastHits.length === 1) return lastHits[0];
-    return all.find(p => normName(p.name).includes(n) || n.includes(normName(p.name))) || null;
+    return matchPlayer(name, Object.values(S.players || {}));
   }
   function findSide(pl) {
     const sides = (slate(DATE).sides || []);
@@ -139,12 +154,12 @@
       }
       const line = parseFloat(row.line);
       if (!isFinite(line)) { skipped.push(row.player + ' — bad line'); return; }
-      let side = String(row.side || 'over').toLowerCase();
-      if (side === 'o' || side === 'more') side = 'over';
-      if (side === 'u' || side === 'less') side = 'under';
-      if (side !== 'over' && side !== 'under') side = 'over';
+      let side = String(row.side || 'over').toLowerCase().trim();
+      if (side === 'o' || side === 'more' || side === 'yes') side = 'over';
+      if (side === 'u' || side === 'less' || side === 'no') side = 'under';
+      if (side !== 'over' && side !== 'under') { skipped.push(row.player + ' — unknown side "' + row.side + '"'); return; }
       const odds = parseOdds(row.odds);
-      if (!odds) { skipped.push(row.player + ' — missing odds'); return; }
+      if (!odds) { skipped.push(row.player + ' — missing or invalid odds'); return; }
       const key = [sideObj.id, pl.id, kind, market, line, side].join('|');
       sl.props = sl.props.filter(p => [p.sideId, p.player, p.kind, p.market, p.line, p.side].join('|') !== key);
       sl.props.push({
@@ -165,20 +180,10 @@
     const name = file.name.toLowerCase();
     if (name.endsWith('.csv') || name.endsWith('.tsv')) {
       const text = await file.text();
-      const sep = name.endsWith('.tsv') ? '\t' : ',';
-      const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim());
-      const aoa = lines.map(line => {
-        if (sep === '\t') return line.split('\t');
-        const out = []; let cur = '', q = false;
-        for (let i = 0; i < line.length; i++) {
-          const c = line[i];
-          if (c === '"') q = !q;
-          else if (c === ',' && !q) { out.push(cur); cur = ''; }
-          else cur += c;
-        }
-        out.push(cur);
-        return out;
-      });
+      // Index.html's parseCSV handles quoted commas, escaped quotes ("") and quoted newlines.
+      const aoa = typeof parseCSV === 'function'
+        ? parseCSV(text)
+        : text.replace(/\r/g, '').split('\n').filter(l => l.trim()).map(l => l.split(name.endsWith('.tsv') ? '\t' : ','));
       return applyRows(rowsFromSheet(aoa));
     }
     const XLSX = await loadXlsx();

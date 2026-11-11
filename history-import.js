@@ -3,23 +3,12 @@
   const HIST_W = 0.12;
   let HIST = { loaded: false, date: '', nB: 0, nP: 0 };
 
-  function normName(s) {
-    return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/\./g, '').replace(/'/g, '').replace(/\s+/g, ' ').trim();
-  }
-  function lastFirst(s) {
-    const parts = normName(s).split(' ');
-    return parts[parts.length - 1] || '';
-  }
-  function findPl(name) {
-    const n = normName(name);
-    const last = lastFirst(name);
-    const all = Object.values((window.S && S.players) || {});
-    let hit = all.find(p => normName(p.name) === n);
-    if (hit) return hit;
-    const lastHits = all.filter(p => lastFirst(p.name) === last);
-    if (lastHits.length === 1) return lastHits[0];
-    return all.find(p => normName(p.name).includes(n) || n.includes(normName(p.name))) || null;
+  function findPl(name, type) {
+    const all = Object.values((window.S && S.players) || {}).filter(p => !type || p.type === type);
+    if (typeof window.LL_matchPlayer === 'function') return window.LL_matchPlayer(name, all);
+    const n = String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const hits = all.filter(p => String(p.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim() === n);
+    return hits.length === 1 ? hits[0] : null;
   }
   function upsertLog(pl, entry) {
     pl.log = pl.log || [];
@@ -31,10 +20,11 @@
     const date = doc.date || '2026-09-24';
     let nB = 0, nP = 0;
     (doc.batters || []).forEach(row => {
-      let pl = findPl(row.name);
+      let pl = findPl(row.name, 'batter');
       if (!pl) {
         const id = 'batter-hist-' + slug(row.name);
-        pl = S.players[id] = { id, type: 'batter', name: row.name, team: row.team || '', season: {}, log: [], src: 'box' };
+        if (!S.players[id]) S.players[id] = { id, type: 'batter', name: row.name, team: row.team || '', season: {}, log: [], src: 'box' };
+        pl = S.players[id];
       }
       upsertLog(pl, {
         date, opp: row.opp || '', PA: +row.PA || 0, H: +row.H || 0, D: +row.D || 0,
@@ -45,8 +35,8 @@
       nB++;
     });
     (doc.pitchers || []).forEach(row => {
-      let pl = findPl(row.name);
-      if (!pl || pl.type !== 'pitcher') {
+      let pl = findPl(row.name, 'pitcher');
+      if (!pl) {
         const id = 'pitcher-hist-' + slug(row.name);
         if (!S.players[id]) S.players[id] = { id, type: 'pitcher', name: row.name, team: row.team || '', season: {}, log: [], src: 'box' };
         pl = S.players[id];
@@ -92,7 +82,9 @@
       const out = _pr(p, side);
       const g = (p.log || []).find(x => x.hist && (x.BF || x.SO));
       if (!g || !out) return out;
-      const bf = Math.max(1, +g.BF || ((+String(g.IP || '0').split('.')[0] || 0) * 4.25));
+      // No BF on the line: estimate from outs (IP "5.2" = 17 outs), ~1.42 BF per out.
+      const ip = String(g.IP || '0'), outs = (parseInt(ip, 10) || 0) * 3 + (parseInt(ip.split('.')[1] || '0', 10) || 0);
+      const bf = Math.max(1, +g.BF || Math.round(outs * 4.25 / 3));
       const r = Object.assign({}, out);
       if (r.K != null) r.K = r.K * (1 - HIST_W) + ((+g.SO || 0) / bf) * HIST_W;
       if (r.BB != null) r.BB = r.BB * (1 - HIST_W) + ((+g.BB || 0) / bf) * HIST_W;

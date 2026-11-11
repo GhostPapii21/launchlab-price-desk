@@ -1,10 +1,12 @@
 /* Board: Pitchers vs Batters best-price lists. */
 (function () {
-  window.BOARD_FOCUS = localStorage.getItem('ll-board-focus') || 'P';
+  let saved = null;
+  try { saved = localStorage.getItem('ll-board-focus'); } catch (e) {}
+  window.BOARD_FOCUS = saved === 'B' ? 'B' : 'P';
 
   ACT.boardFocus = function (d) {
     BOARD_FOCUS = (d && d.focus) || 'P';
-    localStorage.setItem('ll-board-focus', BOARD_FOCUS);
+    try { localStorage.setItem('ll-board-focus', BOARD_FOCUS); } catch (e) {}
     render();
   };
 
